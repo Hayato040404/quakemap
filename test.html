@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>QuakeVision Japan - Broadcast (Map Fix)</title>
+
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: { broadcast: { bg: '#20252e', panel: 'rgba(0,0,0,0.85)' } },
+                fontFamily: { sans: ['"Helvetica Neue"', 'Arial', '"Hiragino Kaku Gothic ProN"', '"Hiragino Sans"', 'Meiryo', 'sans-serif'] }
+            }
+        }
+    }
+    </script>
+
+    <!-- d3 / topojson -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/topojson-client@3"></script>
+
+    <style>
+    html,body { height:100%; margin:0; }
+    body {
+        background:#20252e; color:#fff; overflow:hidden; user-select:none;
+        font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Meiryo", sans-serif;
+    }
+    #map-container { position:absolute; inset:0; width:100vw; height:100vh; z-index:0; }
+
+    .intensity-text {
+        font-family: 'Arial', sans-serif;
+        font-weight:900;
+        text-anchor:middle;
+        dominant-baseline:central;
+        pointer-events:none;
+        letter-spacing:-0.5px;
+    }
+    .point-circle { transition: r 80ms linear, stroke-width 80ms linear; }
+    .hypocenter-mark { stroke:#ff0000; stroke-linecap:round; filter: drop-shadow(0 0 4px rgba(0,0,0,0.85)); transition: transform 80ms linear, stroke-width 80ms linear; }
+    .info-panel { backdrop-filter: blur(4px); border-left:6px solid #fbbf24; }
+
+    #quake-list-panel { transition: transform 0.28s cubic-bezier(.4,0,.2,1); }
+    #quake-list-panel.hidden-panel { transform: translateX(100%); }
+
+    /* error overlay */
+    #map-error {
+        position: absolute;
+        top: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(220,20,60,0.95);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-weight:700;
+        z-index:40;
+        display:none;
+    }
+    </style>
+</head>
+<body>
+
+<div id="map-error" role="alert"></div>
+<div id="map-container"></div>
+
+<!-- UI: left top panels -->
+<div class="absolute top-6 left-6 z-10 flex flex-col gap-4 pointer-events-none">
+    <div class="info-panel bg-black/80 text-white rounded shadow-2xl overflow-hidden min-w-[320px] max-w-md pointer-events-auto">
+        <div class="flex h-24">
+            <div class="bg-yellow-400 text-black w-28 flex flex-col justify-center items-center shrink-0">
+                <span class="text-xs font-bold opacity-80 mb-[-4px]">最大震度</span>
+                <span id="info-max-scale" class="text-6xl font-black tracking-tighter leading-none mt-1">-</span>
+            </div>
+            <div class="flex-1 p-4 flex flex-col justify-center">
+                <div id="info-time" class="text-xl font-bold mb-1 leading-tight">--日 --時--分ごろ</div>
+                <div class="text-sm text-gray-400">発生</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-black/80 text-white p-5 rounded-sm shadow-2xl min-w-[320px] pointer-events-auto border-l-4 border-gray-600">
+        <div class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 items-baseline">
+            <div class="text-gray-400 text-xs font-bold">震源地</div>
+            <div id="info-hypocenter" class="text-2xl font-bold text-yellow-50 leading-none">---</div>
+
+            <div class="text-gray-400 text-xs font-bold">規模</div>
+            <div class="text-xl">M<span id="info-magnitude" class="font-bold text-2xl ml-1">---</span></div>
+
+            <div class="text-gray-400 text-xs font-bold">深さ</div>
+            <div class="text-xl"><span id="info-depth" class="font-bold text-2xl ml-1">---</span></div>
+        </div>
+    </div>
+
+    <div id="info-tsunami-box" class="bg-blue-900/95 text-white px-5 py-3 rounded-sm shadow-2xl font-bold text-lg flex items-center gap-3 pointer-events-auto border-l-4 border-blue-500">
+        <span class="text-2xl">🌊</span>
+        <span id="info-tsunami">情報取得中...</span>
+    </div>
+</div>
+
+<!-- UI: bottom-right -->
+<div class="absolute bottom-6 right-6 z-10 flex flex-col items-end gap-3 pointer-events-none">
+    <button id="toggle-list-btn" class="pointer-events-auto bg-gray-800 hover:bg-gray-700 text-white px-5 py-2.5 rounded shadow-lg text-sm font-bold transition-all flex items-center gap-2 border border-gray-600">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        履歴リスト
+    </button>
+    <div class="text-[10px] text-gray-500 bg-black/40 px-2 py-1 rounded backdrop-blur-sm">
+        Powered by P2PQuake API / JMA / TopoJSON
+    </div>
+</div>
+
+<!-- right slide panel -->
+<div id="quake-list-panel" class="absolute top-0 right-0 h-full w-80 bg-gray-900/95 backdrop-blur-md shadow-2xl z-20 hidden-panel flex flex-col border-l border-gray-700">
+    <div class="p-4 bg-gray-800/80 border-b border-gray-700 flex justify-between items-center shrink-0">
+        <h2 class="font-bold text-gray-100">地震履歴</h2>
+        <button id="close-list-btn" class="text-gray-400 hover:text-white transition-colors">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+    </div>
+    <div id="quake-list-container" class="flex-1 overflow-y-auto p-2 space-y-2"></div>
+</div>
+
+<script>
+/* ============================================================================
+   Config & constants
+   ============================================================================ */
+const INTENSITY_COLORS = {
+    "1":"#888","2":"#1f77b4","3":"#2ca02c","4":"#e6c200","5-":"#ff9900","5+":"#ff6600",
+    "6-":"#d62728","6+":"#a50021","7":"#800080","default":"#555"
+};
+const BLACK_TEXT_SCALES = ["4","5-","5+"];
+
+const API_HISTORY = 'https://api.p2pquake.net/v2/jma/quake?limit=10&since_date=20240101&min_scale=70';
+const API_LOCATIONS = 'https://files.nakn.jp/earthquake/code/PointSeismicIntensityLocation.json';
+const API_MAP = 'https://raw.githubusercontent.com/dataofjapan/land/master/japan.topojson';
+
+/* ============================================================================
+   State & d3 objects
+   ============================================================================ */
+const state = { quakes: [], locationMap: new Map(), mapData: null, selectedId: null };
+
+let svg, gMap, overlayLayer, projection, pathGenerator, zoomBehavior;
+
+/* ============================================================================
+   Init
+   ============================================================================ */
+document.addEventListener('DOMContentLoaded', async () => {
+    setupUI();
+    initMap();
+    try {
+        await loadAllData();
+        if (state.mapData) {
+            renderBaseMap();
+        }
+        if (state.quakes.length > 0) {
+            selectQuake(state.quakes[0].id);
+            renderHistoryList();
+        } else {
+            console.warn("有効な地震データが見つかりませんでした。");
+        }
+    } catch (err) {
+        console.error(err);
+        showMapError("データ読み込みに失敗しました。コンソールを確認してください。");
+    }
+});
+
+/* UI toggles */
+function setupUI(){
+    const listPanel = document.getElementById('quake-list-panel');
+    const toggleBtn = document.getElementById('toggle-list-btn');
+    const closeBtn = document.getElementById('close-list-btn');
+    const toggle = () => listPanel.classList.toggle('hidden-panel');
+    toggleBtn.onclick = toggle; closeBtn.onclick = toggle;
+}
+
+/* show/hide map error */
+function showMapError(msg){
+    const el = document.getElementById('map-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+function hideMapError(){
+    const el = document.getElementById('map-error');
+    el.style.display = 'none';
+}
+
+/* ============================================================================
+   Data load
+   ============================================================================ */
+async function loadAllData(){
+    const [historyRes, locationRes, mapRes] = await Promise.all([
+        fetch(API_HISTORY).then(r=>r.json()),
+        fetch(API_LOCATIONS).then(r=>r.json()),
+        fetch(API_MAP).then(r=>r.json())
+    ]);
+
+    state.mapData = mapRes;
+    // locationRes: values where location == [lat, lon] -> store [lon, lat]
+    Object.values(locationRes).forEach(item => {
+        if (item && item.name && Array.isArray(item.location)) {
+            const [lat, lon] = item.location;
+            state.locationMap.set(item.name, [lon, lat]);
+        }
+    });
+
+    state.quakes = historyRes
+        .filter(q => q.earthquake && q.earthquake.hypocenter && q.earthquake.hypocenter.latitude !== -200)
+        .map(q => {
+            const mappedPoints = (q.points || []).map(p => {
+                const coords = state.locationMap.get(p.addr);
+                return { ...p, coords: coords || null };
+            }).filter(p => p.coords !== null);
+            return {
+                id: q.id,
+                time: q.earthquake.time,
+                hypocenter: q.earthquake.hypocenter,
+                maxScale: q.earthquake.maxScale,
+                domesticTsunami: q.earthquake.domesticTsunami,
+                points: mappedPoints
+            };
+        });
+}
+
+/* ============================================================================
+   Map init
+   ============================================================================ */
+function initMap(){
+    const container = document.getElementById('map-container');
+    const { width, height } = container.getBoundingClientRect();
+
+    svg = d3.select('#map-container').append('svg')
+        .attr('width','100%').attr('height','100%')
+        .attr('viewBox',[0,0,width,height])
+        .style('background-color','#20252e');
+
+    // gMap: 地図（ズーム変換を適用する）
+    gMap = svg.append('g').attr('class','land-layer');
+
+    // overlayLayer: シンボル（震度アイコン・震源）を置く（ズーム変換はここでは適用しない）
+    overlayLayer = svg.append('g').attr('class','overlay-layer').attr('pointer-events','none').style('z-index', 5);
+
+    // projection / path - initialize, will fit to data if available
+    projection = d3.geoMercator().center([137,38]).scale(width*2.5).translate([width/2,height/2]);
+    pathGenerator = d3.geoPath().projection(projection);
+
+    // zoom behavior: apply transform only to gMap (so base map scales), but call reposition/update for overlay
+    zoomBehavior = d3.zoom()
+        .scaleExtent([1,100])
+        .on('zoom', (event) => {
+            gMap.attr('transform', event.transform);
+            repositionSymbols();
+            updateIconSizes(event.transform.k);
+        });
+
+    svg.call(zoomBehavior);
+
+    // resize handling
+    window.addEventListener('resize', () => {
+        const w = container.clientWidth, h = container.clientHeight;
+        svg.attr('viewBox',[0,0,w,h]);
+        projection.translate([w/2,h/2]);
+        renderBaseMap();
+        repositionSymbols();
+    });
+}
+
+/* ============================================================================
+   renderBaseMap: robustly handle topojson or geojson, fit projection to map bounds
+   ============================================================================ */
+function renderBaseMap(){
+    hideMapError();
+    if (!state.mapData) {
+        showMapError("地図データがありません。");
+        return;
+    }
+
+    try {
+        const container = document.getElementById('map-container');
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+
+        // determine feature collection to draw
+        let features = null;
+
+        // If TopoJSON-like (objects)
+        if (state.mapData.objects && typeof state.mapData.objects === 'object') {
+            // try to find an object called 'japan' first, otherwise use all objects combined
+            let objKey = null;
+            if ('japan' in state.mapData.objects) objKey = 'japan';
+            else {
+                // pick the first object key that has geometry
+                const keys = Object.keys(state.mapData.objects);
+                if (keys.length > 0) objKey = keys[0];
+            }
+
+            if (!objKey) throw new Error("TopoJSON: オブジェクトが見つかりません。");
+
+            // if there are multiple objects and you want to merge, you could do so; for now use selected object
+            try {
+                features = topojson.feature(state.mapData, state.mapData.objects[objKey]);
+            } catch (e) {
+                // fallback: try to merge all objects into one FeatureCollection
+                const all = [];
+                Object.keys(state.mapData.objects).forEach(k => {
+                    try {
+                        const f = topojson.feature(state.mapData, state.mapData.objects[k]);
+                        if (f && f.features) all.push(...f.features);
+                    } catch (ee) {
+                        // skip
+                    }
+                });
+                if (all.length > 0) {
+                    features = { type: "FeatureCollection", features: all };
+                } else {
+                    throw e;
+                }
+            }
+        } else if (state.mapData.type === 'FeatureCollection' && Array.isArray(state.mapData.features)) {
+            // GeoJSON already
+            features = state.mapData;
+        } else {
+            // unknown format
+            throw new Error("地図データの形式が不明です。");
+        }
+
+        if (!features || !features.features || features.features.length === 0) {
+            throw new Error("地図データのフィーチャが空です。");
+        }
+
+        // Fit projection to features for the current svg size (robust)
+        projection.fitSize([width, height], features);
+        pathGenerator = d3.geoPath().projection(projection);
+
+        // Draw features
+        gMap.selectAll('path').data(features.features).join('path')
+            .attr('d', pathGenerator)
+            .attr('fill','#374151')
+            .attr('stroke','#4b5563')
+            .attr('stroke-width', 0.5);
+
+        // ensure overlay reposition after map drawing
+        repositionSymbols();
+    } catch (err) {
+        console.error("renderBaseMap error:", err);
+        showMapError("地図描画に失敗しました。コンソールを確認してください。");
+    }
+}
+
+/* ============================================================================
+   Plotting quakes (overlay layer used for symbols)
+   ============================================================================ */
+function selectQuake(id){
+    state.selectedId = id;
+    const quake = state.quakes.find(q=>q.id===id);
+    if (!quake) return;
+    updateInfoPanel(quake);
+    updateMapPlots(quake);
+    fitBounds(quake);
+
+    // ensure overlay aligns with current transform
+    const k = d3.zoomTransform(svg.node()).k || 1;
+    updateIconSizes(k);
+    repositionSymbols();
+}
+
+function updateInfoPanel(quake){
+    const d = new Date(quake.time);
+    const timeStr = `${d.getDate()}日 ${d.getHours()}時${String(d.getMinutes()).padStart(2,'0')}分ごろ`;
+    document.getElementById('info-max-scale').textContent = getScaleLabel(quake.maxScale);
+    document.getElementById('info-time').textContent = timeStr;
+    document.getElementById('info-hypocenter').textContent = quake.hypocenter.name || '---';
+    document.getElementById('info-depth').textContent = quake.hypocenter.depth === 0 ? 'ごく浅い' : `${quake.hypocenter.depth}km`;
+    document.getElementById('info-magnitude').textContent = quake.hypocenter.magnitude.toFixed(1);
+
+    const tsunamiEl = document.getElementById('info-tsunami');
+    const tsunamiBox = document.getElementById('info-tsunami-box');
+    let tText="津波の心配なし", isWarning=false;
+    switch(quake.domesticTsunami){
+        case "None": tText="津波の心配なし"; break;
+        case "Checking": tText="津波有無を調査中"; break;
+        case "NonEffective": tText="若干の海面変動あり"; break;
+        case "Watch": tText="津波注意報"; isWarning=true; break;
+        case "Warning": tText="津波警報"; isWarning=true; break;
+        default: tText="津波情報に注意"; break;
+    }
+    tsunamiEl.textContent = tText;
+    tsunamiBox.className = isWarning
+        ? "bg-red-600 text-white px-5 py-3 rounded-sm shadow-2xl font-bold text-lg flex items-center gap-3 pointer-events-auto border-l-4 border-red-300"
+        : "bg-blue-900/95 text-white px-5 py-3 rounded-sm shadow-2xl font-bold text-lg flex items-center gap-3 pointer-events-auto border-l-4 border-blue-500";
+}
+
+/* Create symbols into overlayLayer and store coords on DOM nodes */
+function updateMapPlots(quake){
+    // clear overlay
+    overlayLayer.selectAll('*').remove();
+
+    // Points
+    const sortedPoints = [...quake.points].sort((a,b)=>a.scale - b.scale);
+    const pointGroups = overlayLayer.selectAll('g.point')
+        .data(sortedPoints, d=>d.addr || Math.random())
+        .join('g')
+        .attr('class','point')
+        .each(function(d){
+            this.__coords = d.coords; // [lon, lat]
+        });
+
+    // compute base sizes on datum
+    pointGroups.each(function(d){
+        const label = getScaleLabel(d.scale);
+        let baseR=5;
+        if (["7","6+"].includes(label)) baseR=10;
+        else if (["6-","5+"].includes(label)) baseR=8;
+        else if (label==="4") baseR=6;
+        d._baseRadius = baseR;
+        let baseFont=10;
+        if (["7","6+"].includes(label)) baseFont=14;
+        else if (["6-","5+"].includes(label)) baseFont=11;
+        else baseFont=8;
+        d._baseFont = baseFont;
+    });
+
+    // append circle + text (overlay: positions will be set by repositionSymbols)
+    pointGroups.append('circle').attr('class','point-circle')
+        .attr('r',4)
+        .attr('fill', d => INTENSITY_COLORS[getScaleLabel(d.scale)] || '#999')
+        .attr('stroke','white').attr('stroke-width',1);
+
+    pointGroups.append('text').attr('class','intensity-text')
+        .attr('font-size','10px')
+        .attr('fill', d => BLACK_TEXT_SCALES.includes(getScaleLabel(d.scale)) ? 'black' : 'white')
+        .text(d => getScaleLabel(d.scale));
+
+    // Hypocenter (single)
+    const hypo = quake.hypocenter;
+    if (hypo && hypo.latitude !== -200 && isFinite(hypo.latitude) && isFinite(hypo.longitude)){
+        const hg = overlayLayer.append('g').attr('class','hypo-group').each(function(){
+            this.__hypo = [hypo.longitude, hypo.latitude];
+        });
+        hg.append('path').attr('class','hypocenter-mark')
+            .attr('d',"M-10,-10 L10,10 M-10,10 L10,-10")
+            .attr('fill','none')
+            .attr('stroke-width',4)
+            .attr('transform','scale(1)');
+    }
+
+    // After creating, set positions and sizes
+    repositionSymbols();
+    const k = d3.zoomTransform(svg.node()).k || 1;
+    updateIconSizes(k);
+}
+
+/* ============================================================================
+   repositionSymbols:
+   - projection returns map-local coords (before transform)
+   - apply current zoom transform to that point (t.apply(proj)) to get final screen coords
+   - overlay is NOT transformed; we place symbols at final screen coords
+   ============================================================================ */
+function repositionSymbols(){
+    if (!overlayLayer || !projection) return;
+    const t = d3.zoomTransform(svg.node()); // current transform applied to gMap
+    overlayLayer.selectAll('g.point').each(function(){
+        const node = this;
+        const coords = node.__coords || (d3.select(this).datum() && d3.select(this).datum().coords) || null;
+        if (!coords || !Array.isArray(coords)){ d3.select(this).style('display','none'); return; }
+        try {
+            const proj = projection(coords);
+            if (!proj || !isFinite(proj[0]) || !isFinite(proj[1])) { d3.select(this).style('display','none'); return; }
+            const screen = t.apply(proj);
+            d3.select(this).attr('transform', `translate(${screen[0]},${screen[1]})`).style('display', null);
+        } catch (e) {
+            console.warn('repositionSymbols point error', e);
+            d3.select(this).style('display','none');
+        }
+    });
+    overlayLayer.selectAll('g.hypo-group').each(function(){
+        const node = this;
+        const hypo = node.__hypo || null;
+        if (!hypo || !Array.isArray(hypo)){ d3.select(this).style('display','none'); return; }
+        try {
+            const proj = projection(hypo);
+            if (!proj || !isFinite(proj[0]) || !isFinite(proj[1])) { d3.select(this).style('display','none'); return; }
+            const screen = t.apply(proj);
+            d3.select(this).attr('transform', `translate(${screen[0]},${screen[1]})`).style('display', null);
+        } catch (e) {
+            console.warn('repositionSymbols hypo error', e);
+            d3.select(this).style('display','none');
+        }
+    });
+}
+
+/* ============================================================================
+   updateIconSizes: overlay not transformed by zoom, so set pixel sizes directly
+   ============================================================================ */
+function updateIconSizes(k){
+    if (!overlayLayer) return;
+    if (!k || !isFinite(k)) k = 1;
+    const kk = Math.max(0.1, k);
+    const zoomFactor = (k) => Math.min(3, 1 + Math.log10(k + 1) * 0.7);
+
+    overlayLayer.selectAll('g.point').each(function(d){
+        const group = d3.select(this);
+        const datum = d || group.datum();
+        const baseR = datum && datum._baseRadius ? datum._baseRadius : 5;
+        const baseFont = datum && datum._baseFont ? datum._baseFont : 8;
+        const zf = zoomFactor(kk);
+
+        const desiredR = Math.max(3, Math.min(40, baseR * zf)); // screen px
+        const desiredFont = Math.max(8, Math.min(28, baseFont * zf)); // screen px
+        const desiredStrokePx = Math.max(0.6, Math.min(6, 1.2 * zf)); // screen px for white border
+
+        group.selectAll('circle.point-circle').interrupt().transition().duration(80)
+            .attr('r', desiredR)
+            .attr('stroke-width', desiredStrokePx);
+        group.selectAll('text.intensity-text').interrupt().transition().duration(80)
+            .attr('font-size', `${desiredFont}px`);
+    });
+
+    overlayLayer.selectAll('g.hypo-group').each(function(){
+        const group = d3.select(this);
+        const extra = zoomFactor(kk);
+        const pathScale = extra; // overlay not scaled, so scale directly
+        const desiredStrokePx = Math.max(0.8, Math.min(10, 3.5 * extra));
+        group.selectAll('path.hypocenter-mark').interrupt().transition().duration(80)
+            .attr('transform', `scale(${pathScale})`)
+            .attr('stroke-width', desiredStrokePx)
+            .attr('opacity', 1);
+    });
+}
+
+/* ============================================================================
+   fitBounds (animates gMap via zoomBehavior.transform)
+   ============================================================================ */
+function fitBounds(quake){
+    const points = [];
+    if (quake.hypocenter.latitude !== -200) points.push([quake.hypocenter.longitude, quake.hypocenter.latitude]);
+    quake.points.forEach(p => points.push(p.coords));
+    if (points.length === 0) return;
+
+    let minLon=180,maxLon=-180,minLat=90,maxLat=-90;
+    points.forEach(([lon,lat]) => { if (lon<minLon) minLon=lon; if (lon>maxLon) maxLon=lon; if (lat<minLat) minLat=lat; if (lat>maxLat) maxLat=lat; });
+
+    const pad = 0.5;
+    const bounds = [ projection([minLon-pad, maxLat+pad*0.5]), projection([maxLon+pad, minLat-pad*0.5]) ];
+    const svgEl = document.querySelector('svg');
+    const width = svgEl.clientWidth, height = svgEl.clientHeight;
+    const dx = bounds[1][0] - bounds[0][0], dy = bounds[1][1] - bounds[0][1];
+    const x = (bounds[0][0]+bounds[1][0])/2, y = (bounds[0][1]+bounds[1][1])/2;
+    const offsetX = width > 768 ? width * -0.1 : 0;
+    const scale = Math.max(1, Math.min(30, 0.9 / Math.max(dx/width, dy/height)));
+    const translate = [ width/2 - scale * x + offsetX, height/2 - scale * y ];
+
+    svg.transition().duration(1000).ease(d3.easeCubicOut)
+        .call(zoomBehavior.transform, d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale))
+        .end()
+        .then(()=>{ repositionSymbols(); const kk = d3.zoomTransform(svg.node()).k || 1; updateIconSizes(kk); })
+        .catch(()=>{ repositionSymbols(); const kk = d3.zoomTransform(svg.node()).k || 1; updateIconSizes(kk); });
+}
+
+/* ============================================================================
+   Utilities & list rendering
+   ============================================================================ */
+function getScaleLabel(scale){
+    switch(scale){
+        case 10: return "1"; case 20: return "2"; case 30: return "3";
+        case 40: return "4"; case 45: case 46: return "5-";
+        case 50: return "5+"; case 55: return "6-"; case 60: return "6+";
+        case 70: return "7"; default: return "?";
+    }
+}
+
+function renderHistoryList(){
+    const container = document.getElementById('quake-list-container');
+    container.innerHTML = '';
+    state.quakes.forEach(q => {
+        const div = document.createElement('div');
+        const isSelected = q.id === state.selectedId;
+        div.className = `p-3 rounded cursor-pointer border transition-all duration-200 flex items-center gap-3
+            ${isSelected ? 'bg-gray-700 border-yellow-500 shadow-md transform scale-[1.02]' : 'bg-gray-800 border-transparent hover:bg-gray-700 hover:border-gray-600'}`;
+        const label = getScaleLabel(q.maxScale);
+        const color = INTENSITY_COLORS[label];
+        const textColor = BLACK_TEXT_SCALES.includes(label) ? 'text-black' : 'text-white';
+        const timeStr = new Date(q.time).toLocaleString('ja-JP', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
+        div.innerHTML = `
+            <div class="w-10 h-10 rounded-md flex items-center justify-center font-black text-lg shadow-sm shrink-0 ${textColor}" style="background:${color}">
+                ${label}
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="text-xs text-gray-400 font-mono mb-0.5">${timeStr}</div>
+                <div class="text-sm font-bold text-gray-100 truncate">${q.hypocenter.name || '震源地不明'}</div>
+                <div class="flex gap-2 text-xs text-gray-400 mt-0.5">
+                    <span>M${q.hypocenter.magnitude.toFixed(1)}</span>
+                    <span>${q.hypocenter.depth}km</span>
+                </div>
+            </div>
+        `;
+        div.onclick = () => selectQuake(q.id);
+        container.appendChild(div);
+    });
+}
+
+</script>
+</body>
+</html>
