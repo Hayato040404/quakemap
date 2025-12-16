@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
@@ -6,13 +7,17 @@
 <title>QuakeVision - Client-side Screenshot (Full UI)</title>
 
 <!-- Tailwind -->
+
 <script src="https://cdn.tailwindcss.com"></script>
+
 <script>
 tailwind.config = { theme:{ extend:{ colors:{ broadcast:{ bg:'#20252e', panel:'rgba(0,0,0,0.85)' }}, fontFamily:{ sans:['"Helvetica Neue"', 'Arial', '"Hiragino Kaku Gothic ProN"', '"Hiragino Sans"', 'Meiryo', 'sans-serif'] } } } };
 </script>
 
 <!-- d3 / topojson -->
+
 <script src="https://d3js.org/d3.v7.min.js"></script>
+
 <script src="https://unpkg.com/topojson-client@3"></script>
 
 <style>
@@ -34,14 +39,17 @@ html,body { height:100%; margin:0; background:#20252e; color:#fff; font-family: 
 /* make capture preview not selectable */
 .capture-preview { pointer-events:none; }
 </style>
+
 </head>
 <body>
 
 <!-- Everything inside #capture-root will be captured -->
+
 <div id="capture-root">
   <div id="map-container"></div>
 
   <!-- UI: left top panels -->
+
   <div class="absolute top-6 left-6 z-10 flex flex-col gap-4 pointer-events-none">
     <div class="info-panel bg-black/80 text-white rounded shadow-2xl overflow-hidden min-w-[320px] max-w-md pointer-events-auto">
       <div class="flex h-24">
@@ -56,26 +64,30 @@ html,body { height:100%; margin:0; background:#20252e; color:#fff; font-family: 
       </div>
     </div>
 
-    <div class="bg-black/80 text-white p-5 rounded-sm shadow-2xl min-w-[320px] pointer-events-auto border-l-4 border-gray-600">
-      <div class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 items-baseline">
-        <div class="text-gray-400 text-xs font-bold">震源地</div>
-        <div id="info-hypocenter" class="text-2xl font-bold text-yellow-50 leading-none">---</div>
 
-        <div class="text-gray-400 text-xs font-bold">規模</div>
-        <div class="text-xl">M<span id="info-magnitude" class="font-bold text-2xl ml-1">---</span></div>
+<div class="bg-black/80 text-white p-5 rounded-sm shadow-2xl min-w-[320px] pointer-events-auto border-l-4 border-gray-600">
+  <div class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 items-baseline">
+    <div class="text-gray-400 text-xs font-bold">震源地</div>
+    <div id="info-hypocenter" class="text-2xl font-bold text-yellow-50 leading-none">---</div>
 
-        <div class="text-gray-400 text-xs font-bold">深さ</div>
-        <div class="text-xl"><span id="info-depth" class="font-bold text-2xl ml-1">---</span></div>
-      </div>
-    </div>
+    <div class="text-gray-400 text-xs font-bold">規模</div>
+    <div class="text-xl">M<span id="info-magnitude" class="font-bold text-2xl ml-1">---</span></div>
 
-    <div id="info-tsunami-box" class="bg-blue-900/95 text-white px-5 py-3 rounded-sm shadow-2xl font-bold text-lg flex items-center gap-3 pointer-events-auto border-l-4 border-blue-500">
-      <span class="text-2xl">🌊</span>
-      <span id="info-tsunami">情報取得中...</span>
-    </div>
+    <div class="text-gray-400 text-xs font-bold">深さ</div>
+    <div class="text-xl"><span id="info-depth" class="font-bold text-2xl ml-1">---</span></div>
+  </div>
+</div>
+
+<div id="info-tsunami-box" class="bg-blue-900/95 text-white px-5 py-3 rounded-sm shadow-2xl font-bold text-lg flex items-center gap-3 pointer-events-auto border-l-4 border-blue-500">
+  <span class="text-2xl">🌊</span>
+  <span id="info-tsunami">情報取得中...</span>
+</div>
+
+
   </div>
 
   <!-- UI: bottom-right -->
+
   <div class="absolute bottom-6 right-6 z-10 flex flex-col items-end gap-3 pointer-events-none">
     <button id="toggle-list-btn" class="pointer-events-auto bg-gray-800 hover:bg-gray-700 text-white px-5 py-2.5 rounded shadow-lg text-sm font-bold transition-all flex items-center gap-2 border border-gray-600">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -87,6 +99,7 @@ html,body { height:100%; margin:0; background:#20252e; color:#fff; font-family: 
   </div>
 
   <!-- right slide panel -->
+
   <div id="quake-list-panel" class="absolute top-0 right-0 h-full w-80 bg-gray-900/95 backdrop-blur-md shadow-2xl z-20 hidden transform translate-x-full transition-transform">
     <div class="p-4 bg-gray-800/80 border-b border-gray-700 flex justify-between items-center shrink-0">
       <h2 class="font-bold text-gray-100">地震履歴</h2>
@@ -99,9 +112,11 @@ html,body { height:100%; margin:0; background:#20252e; color:#fff; font-family: 
 </div>
 
 <!-- status -->
+
 <div id="screenshot-status">生成中…</div>
 
 <!-- optional fallback lib (only used as fallback) -->
+
 <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@2.9.0/dist/dom-to-image-more.min.js"></script>
 
 <script>
@@ -588,15 +603,98 @@ async function waitForDataReady(timeout = 8000) {
   } catch(e) { console.warn('waitForDataReady:', e.message); }
 }
 
+/* ============================================================================
+   --- 追加: waitForMapIdle ---
+   d3 の transition (d3.active) / Web Animations / CSS transition をポーリングで検出し、
+   「全ての関連アニメが停止した」と判断してから解決するユーティリティ。
+   タイムアウト後は強制的に解決して先に進みます（無限待ち防止）。
+   ============================================================================ */
+async function waitForMapIdle(timeout = 3000, checkInterval = 50) {
+  const start = Date.now();
+  return new Promise((resolve) => {
+    const check = () => {
+      let active = false;
+
+      // 1) d3 の active トランジションをチェック（svg / overlayLayer に対して）
+      try {
+        if (window.d3 && typeof d3.active === 'function') {
+          const nodesToCheck = [];
+          if (typeof svg !== 'undefined' && svg && svg.node) nodesToCheck.push(svg.node());
+          if (typeof overlayLayer !== 'undefined' && overlayLayer && overlayLayer.node) nodesToCheck.push(overlayLayer.node());
+          for (const n of nodesToCheck) {
+            if (n && d3.active(n)) { active = true; break; }
+          }
+        }
+      } catch (e) {
+        console.warn('waitForMapIdle d3 check failed', e);
+      }
+
+      // 2) element.getAnimations() で走っている Web Animations / CSS アニメーションをチェック
+      try {
+        if (!active) {
+          // 監視対象セレクタ：震度アイコン・テキスト・震源マーク等
+          const animatedSelectors = '.point-circle, .intensity-text, .hypocenter-mark, svg *';
+          const els = document.querySelectorAll(animatedSelectors);
+          for (const el of els) {
+            const anims = (el.getAnimations && el.getAnimations()) || [];
+            if (anims.some(a => a.playState === 'running')) { active = true; break; }
+            // CSS の transition / animation の存在も参考判定
+            const cs = getComputedStyle(el);
+            const td = cs.transitionDuration || '';
+            const ta = cs.animationDuration || '';
+            const parseSec = s => {
+              if (!s) return 0;
+              try {
+                const parts = s.split(',').map(x=>x.trim());
+                let min = Infinity;
+                for (const p of parts) {
+                  if (p.endsWith('ms')) { min = Math.min(min, parseFloat(p)/1000); }
+                  else if (p.endsWith('s')) { min = Math.min(min, parseFloat(p)); }
+                }
+                return isFinite(min) ? min : 0;
+              } catch(e){ return 0; }
+            };
+            if (parseSec(td) > 0 || parseSec(ta) > 0) {
+              active = true;
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('waitForMapIdle animation check failed', e);
+      }
+
+      // 終了条件
+      if (!active) return resolve();
+      if (Date.now() - start > timeout) return resolve(); // タイムアウトしたら先に進む
+      setTimeout(check, checkInterval);
+    };
+    check();
+  });
+}
+
 /* Auto-capture orchestrator */
 async function startAutoCaptureIfRequested(){
   const params = getParams();
   if (!params.auto) return;
   const status = document.getElementById('screenshot-status'); status.style.display = 'block'; status.textContent = '地図読み込みを待機しています…';
   await waitForDataReady(7000);
+  // ここで quakeId が指定されていれば選択し、選択に伴うズーム遷移が終わるのを待つ
   if (params.quakeId) {
-    try { if (typeof window.selectQuake === 'function') { window.selectQuake(params.quakeId); await new Promise(r=>setTimeout(r, Math.max(600, params.wait))); } }
+    try {
+      if (typeof window.selectQuake === 'function') {
+        window.selectQuake(params.quakeId);
+        // 既存の短い待機（params.wait）を維持
+        await new Promise(r=>setTimeout(r, Math.max(600, params.wait)));
+        // 追加: d3 の transition やアイコンの拡大縮小トランジションが終わるのを待機
+        // タイムアウトは params.wait に依存して長めに確保
+        await waitForMapIdle(Math.max(1200, params.wait + 800));
+      }
+    }
     catch(e){ console.warn('selectQuake problem', e); }
+  } else {
+    // quakeId がない場合でも、地図上のアニメが残っているなら少し待つ（短め）
+    await waitForMapIdle(1200);
   }
   status.textContent = '画像を生成中…';
   try {
@@ -638,6 +736,8 @@ async function startAutoCaptureIfRequested(){
 /* manual download helper (you can call from console) */
 window.downloadCurrentView = async function(){
   try {
+    // 追加：手動キャプチャでもズームやアイコン拡大縮小のトランジションが終わるのを待つ
+    await waitForMapIdle(2000);
     const blob = await captureCaptureRoot({ width: window.innerWidth, height: window.innerHeight, scale: 2, filename: 'quake-capture.png' });
     downloadBlob(blob, 'quake-capture.png');
   } catch (e) {
@@ -646,5 +746,6 @@ window.downloadCurrentView = async function(){
   }
 };
 </script>
+
 </body>
 </html>
